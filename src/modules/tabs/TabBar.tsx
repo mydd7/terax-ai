@@ -1,1 +1,1 @@
-PLACEHOLDER
+LOAD_FROM:/workspace/night-shift/push/ready-1242/TabBar.tsx
