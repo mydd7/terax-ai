@@ -55,7 +55,7 @@ export function useMarkdownDocument(
 
   useEffect(() => {
     let alive = true;
-    let watching = false;
+    let registration: Promise<boolean> | undefined;
     let requestId = 0;
     const workspace = currentWorkspaceEnv();
     // The watcher reports canonical paths; the tab may hold an alias spelling.
@@ -95,7 +95,8 @@ export function useMarkdownDocument(
       else staleRef.current = true;
     });
     const onTouched = () => {
-      if (!watching || !alive) return;
+      // Changes before the first read are covered by its snapshot.
+      if (!alive || requestId === 0) return;
       if (visibleRef.current) coalescer.poke();
       else staleRef.current = true;
     };
@@ -115,7 +116,24 @@ export function useMarkdownDocument(
     void Promise.allSettled([
       track(
         listenFsChanged((paths) => {
-          if (matches(paths)) onTouched();
+          let workspacePaths = paths;
+          if (workspace.kind === "wsl") {
+            const distro = workspace.distro.toLowerCase();
+            workspacePaths = paths.map((hostPath) => {
+              const normalized = hostPath.replace(/\\/g, "/");
+              const share = /^\/\/(?:wsl\.localhost|wsl\$)\/([^/]+)/i.exec(
+                normalized,
+              );
+              if (share && share[1].toLowerCase() === distro) {
+                return normalized.slice(share[0].length) || "/";
+              }
+              return normalized.replace(
+                /^([a-z]):\//i,
+                (_, drive: string) => `/mnt/${drive.toLowerCase()}/`,
+              );
+            });
+          }
+          if (matches(workspacePaths)) onTouched();
         }),
       ),
       track(
@@ -126,11 +144,11 @@ export function useMarkdownDocument(
           },
         ),
       ),
-    ]).then(() => {
+    ]).then(async () => {
       if (!alive) return;
-      watching = true;
-      watchAdd([dir], [path], workspace);
-      read();
+      registration = watchAdd([dir], [path], workspace);
+      await registration;
+      if (alive) read();
     });
     invoke<string>("fs_canonicalize", { path, workspace })
       .then((c) => {
@@ -143,7 +161,9 @@ export function useMarkdownDocument(
       coalescer.cancel();
       reloadRef.current = null;
       for (const un of unlisten) un();
-      if (watching) watchRemove([dir], [path], workspace);
+      void registration?.then((added) => {
+        if (added) watchRemove([dir], [path], workspace);
+      });
     };
   }, [path]);
 

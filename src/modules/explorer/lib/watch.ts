@@ -11,17 +11,18 @@ type FsChangedPayload = { paths: string[] };
  * own path when their size or mtime moves, because the native watcher only
  * reports which directory changed.
  */
-export function watchAdd(
+export async function watchAdd(
   paths: string[],
   files: string[] = [],
   workspace: WorkspaceEnv = currentWorkspaceEnv(),
-): void {
-  if (paths.length === 0 && files.length === 0) return;
-  void invoke("fs_watch_add", {
-    paths,
-    files,
-    workspace,
-  }).catch(() => {});
+): Promise<boolean> {
+  if (paths.length === 0 && files.length === 0) return false;
+  try {
+    await invoke("fs_watch_add", { paths, files, workspace });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function watchRemove(
