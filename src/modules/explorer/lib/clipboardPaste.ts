@@ -11,9 +11,12 @@ export function pasteTargetDir(
   selected: string | null,
   isDir: (path: string) => boolean | undefined,
   rootPath: string,
+  windowsPaths: boolean,
 ): string {
   if (!selected) return rootPath;
-  return isDir(selected) ? selected : parentDir(selected, rootPath);
+  return isDir(selected)
+    ? selected
+    : parentDir(selected, windowsPaths, rootPath);
 }
 
 export function isPasteShortcut(

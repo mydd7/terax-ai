@@ -16,6 +16,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src",
         true,
         isDir,
+        false,
       ),
     ).toBe("/repo/src");
   });
@@ -28,6 +29,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src/index.ts",
         true,
         isDir,
+        false,
       ),
     ).toBe("/repo/src");
   });
@@ -40,6 +42,7 @@ describe("resolveExplorerMoveTarget", () => {
         "C:/target.txt",
         true,
         isDir,
+        true,
       ),
     ).toBe("C:/");
     expect(
@@ -49,6 +52,7 @@ describe("resolveExplorerMoveTarget", () => {
         "C:/target.txt",
         true,
         isDir,
+        true,
       ),
     ).toBeNull();
   });
@@ -61,6 +65,7 @@ describe("resolveExplorerMoveTarget", () => {
         null,
         true,
         isDir,
+        false,
       ),
     ).toBe("/repo");
   });
@@ -73,6 +78,7 @@ describe("resolveExplorerMoveTarget", () => {
         null,
         false,
         isDir,
+        false,
       ),
     ).toBeNull();
   });
@@ -85,6 +91,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src",
         true,
         isDir,
+        false,
       ),
     ).toBeNull();
     expect(
@@ -94,6 +101,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src/components",
         true,
         isDir,
+        false,
       ),
     ).toBeNull();
   });
@@ -106,6 +114,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src/components",
         true,
         isDir,
+        false,
       ),
     ).toBe("/repo/src/components");
   });
@@ -118,6 +127,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src",
         true,
         isDir,
+        false,
       ),
     ).toBeNull();
   });
@@ -130,6 +140,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src",
         true,
         isDir,
+        false,
       ),
     ).toBe("/repo/src");
   });
@@ -142,6 +153,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src/components",
         true,
         isDir,
+        false,
       ),
     ).toBeNull();
   });
