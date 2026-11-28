@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
+import { IS_WINDOWS } from "@/lib/platform";
 import {
   currentWorkspaceEnv,
   useWorkspaceEnvStore,
@@ -18,6 +19,7 @@ import {
   excludeNestedSources,
   type FsMoveResult,
 } from "./batchMove";
+import { parentDir, pathBasename } from "./pathParent";
 import { listenFsChanged, watchAdd, watchRemove } from "./watch";
 import { createWatchRegistry, planVisibilityEdge } from "./watchRegistry";
 
@@ -49,10 +51,35 @@ export function joinPath(parent: string, name: string): string {
   return `${parent}/${name}`;
 }
 
-function dirname(path: string): string {
-  const i = path.lastIndexOf("/");
-  if (i <= 0) return "/";
-  return path.slice(0, i);
+function dirname(path: string, windowsPaths: boolean): string {
+  return parentDir(path, windowsPaths, "/");
+}
+
+export function removedChildDirectories(
+  parent: string,
+  cachedPaths: readonly string[],
+  liveDirs: ReadonlySet<string>,
+  windowsPaths: boolean,
+): string[] {
+  return cachedPaths.filter(
+    (path) =>
+      path !== parent &&
+      dirname(path, windowsPaths) === parent &&
+      !liveDirs.has(path),
+  );
+}
+
+export function planExplorerRename(
+  path: string,
+  newName: string,
+  windowsPaths: boolean,
+) {
+  const name = newName.trim();
+  const oldName = pathBasename(path, windowsPaths);
+  if (!name || name === oldName) return null;
+  const parent = dirname(path, windowsPaths);
+  const prefix = path.slice(0, path.length - oldName.length);
+  return { parent, to: prefix ? `${prefix}${name}` : joinPath(parent, name) };
 }
 
 const EXPANSION_CACHE_LIMIT = 8;
@@ -109,6 +136,7 @@ type Options = {
 
 export function useFileTree(rootPath: string | null, options?: Options) {
   const workspace = useWorkspaceEnvStore((s) => s.env);
+  const windowsPaths = IS_WINDOWS && workspace.kind === "local";
   const workspaceKey = workspaceScopeKey(workspace);
   const showHidden = usePreferencesStore((s) => s.showHidden);
   const showHiddenRef = useRef(showHidden);
@@ -219,11 +247,12 @@ export function useFileTree(rootPath: string | null, options?: Options) {
             .filter((e) => e.kind === "dir")
             .map((e) => joinPath(path, e.name)),
         );
-        const removedRoots: string[] = [];
-        for (const key of Object.keys(nodesRef.current)) {
-          if (dirname(key) === path && !liveDirs.has(key))
-            removedRoots.push(key);
-        }
+        const removedRoots = removedChildDirectories(
+          path,
+          Object.keys(nodesRef.current),
+          liveDirs,
+          windowsPaths,
+        );
         const dead = new Set<string>();
         if (removedRoots.length > 0) {
           const candidates = new Set<string>([
@@ -262,7 +291,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         return false;
       }
     },
-    [scopeKey, workspace, watches],
+    [scopeKey, workspace, watches, windowsPaths],
   );
 
   // Root change → restore the cached expansion for this root, re-scope watches,
@@ -333,7 +362,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
       const current = nodesRef.current;
       const dirs = new Set<string>();
       for (const p of paths) {
-        const parent = dirname(p);
+        const parent = dirname(p, windowsPaths);
         if (current[parent]?.status === "loaded") dirs.add(parent);
         if (current[p]?.status === "loaded") dirs.add(p);
       }
@@ -346,7 +375,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
       alive = false;
       unlisten?.();
     };
-  }, [active, fetchChildren]);
+  }, [active, fetchChildren, windowsPaths]);
 
   // Re-list loaded directories when the visibility or git-decoration prefs
   // change. Keyed on the prefs only: a root change already loads its own
@@ -470,14 +499,12 @@ export function useFileTree(rootPath: string | null, options?: Options) {
   const commitRename = useCallback(
     async (newName: string) => {
       if (!renaming) return;
-      const trimmed = newName.trim();
-      const parent = dirname(renaming);
-      const oldName = renaming.slice(parent === "/" ? 1 : parent.length + 1);
-      if (!trimmed || trimmed === oldName) {
+      const plan = planExplorerRename(renaming, newName, windowsPaths);
+      if (!plan) {
         setRenaming(null);
         return;
       }
-      const to = joinPath(parent, trimmed);
+      const { parent, to } = plan;
       try {
         await invoke("fs_rename", {
           from: renaming,
@@ -492,7 +519,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         setRenaming(null);
       }
     },
-    [renaming, workspace, scopeKey, fetchChildren],
+    [renaming, workspace, scopeKey, fetchChildren, windowsPaths],
   );
 
   const deletePath = useCallback(
@@ -501,19 +528,19 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         await invoke("fs_delete", { path, workspace });
         optionsRef.current?.onPathsDeleted?.([path]);
         if (scopeKeyRef.current === scopeKey) {
-          await fetchChildren(dirname(path));
+          await fetchChildren(dirname(path, windowsPaths));
         }
       } catch (e) {
         console.error("fs_delete failed:", e);
       }
     },
-    [workspace, scopeKey, fetchChildren],
+    [workspace, scopeKey, fetchChildren, windowsPaths],
   );
 
   const deletePaths = useCallback(
     async (paths: string[]) => {
       if (paths.length === 0) return;
-      const topLevelPaths = excludeNestedSources(paths);
+      const topLevelPaths = excludeNestedSources(paths, windowsPaths);
       const run = async () => {
         if (scopeKeyRef.current !== scopeKey) return;
         const { deleted, failed } = await invoke<DeleteBatchResult>(
@@ -524,14 +551,16 @@ export function useFileTree(rootPath: string | null, options?: Options) {
           optionsRef.current?.onPathsDeleted?.(deleted);
         }
         if (scopeKeyRef.current === scopeKey) {
-          const parents = new Set(deleted.map(dirname));
+          const parents = new Set(
+            deleted.map((path) => dirname(path, windowsPaths)),
+          );
           await Promise.all([...parents].map((path) => fetchChildren(path)));
         }
         if (failed > 0) toast.error("Delete failed for one or more items");
       };
       await run();
     },
-    [workspace, rootPath, scopeKey, fetchChildren],
+    [workspace, rootPath, scopeKey, fetchChildren, windowsPaths],
   );
 
   const resolveMoveConflict = useCallback(
@@ -566,7 +595,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
       const run = async () => {
         if (scopeKeyRef.current !== scopeKey) return;
         const parents = new Set<string>([toDir]);
-        const outcome = await executeBatchMove(sources, toDir, {
+        const outcome = await executeBatchMove(sources, toDir, windowsPaths, {
           move: (item, expectedConflict) =>
             invoke<FsMoveResult>("fs_move", {
               from: item.from,
@@ -579,7 +608,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
           canReplace: (item) =>
             optionsRef.current?.canReplacePath?.(item.to) ?? true,
           onMoved: (item) => {
-            parents.add(dirname(item.from));
+            parents.add(dirname(item.from, windowsPaths));
             optionsRef.current?.onPathRenamed?.(item.from, item.to);
           },
           isCurrent: () => scopeKeyRef.current === scopeKey,
@@ -599,7 +628,14 @@ export function useFileTree(rootPath: string | null, options?: Options) {
       };
       await run();
     },
-    [workspace, rootPath, scopeKey, resolveMoveConflict, fetchChildren],
+    [
+      workspace,
+      rootPath,
+      scopeKey,
+      resolveMoveConflict,
+      fetchChildren,
+      windowsPaths,
+    ],
   );
 
   return {

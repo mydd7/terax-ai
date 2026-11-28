@@ -19,24 +19,24 @@ const isDir = (p: string) => dirs.has(p);
 
 describe("pasteTargetDir", () => {
   it("pastes at the root when nothing is selected", () => {
-    expect(pasteTargetDir(null, isDir, "/r")).toBe("/r");
+    expect(pasteTargetDir(null, isDir, "/r", false)).toBe("/r");
   });
 
   it("pastes inside a selected folder", () => {
-    expect(pasteTargetDir("/r/src/lib", isDir, "/r")).toBe("/r/src/lib");
+    expect(pasteTargetDir("/r/src/lib", isDir, "/r", false)).toBe("/r/src/lib");
   });
 
   it("pastes beside a selected file", () => {
-    expect(pasteTargetDir("/r/src/a.ts", isDir, "/r")).toBe("/r/src");
+    expect(pasteTargetDir("/r/src/a.ts", isDir, "/r", false)).toBe("/r/src");
   });
 
   it.each([
-    ["C:/a.txt", "C:/"],
-    ["C:/repo/a.txt", "C:/repo"],
-    ["/a.txt", "/"],
-    ["//server/share/a.txt", "//server/share"],
-  ])("preserves absolute roots for %s", (path, parent) => {
-    expect(pasteTargetDir(path, () => false, parent)).toBe(parent);
+    ["C:/a.txt", "C:/", true],
+    ["C:/repo/a.txt", "C:/repo", true],
+    ["/a.txt", "/", false],
+    ["//server/share/a.txt", "//server/share", true],
+  ])("preserves absolute roots for %s", (path, parent, windowsPaths) => {
+    expect(pasteTargetDir(path, () => false, parent, windowsPaths)).toBe(parent);
   });
 });
 

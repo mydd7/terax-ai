@@ -1,3 +1,4 @@
+import { IS_WINDOWS } from "@/lib/platform";
 import {
   listenFsChanged,
   parentDir,
@@ -106,7 +107,7 @@ export function useMarkdownDocument(
       touchesPath(paths, path) ||
       (canonical !== null && touchesPath(paths, canonical));
 
-    const dir = parentDir(path);
+    const dir = parentDir(path, IS_WINDOWS && workspace.kind === "local");
     const unlisten: Array<() => void> = [];
     const track = (pending: Promise<() => void>) =>
       pending.then((un) => (alive ? unlisten.push(un) : un()));

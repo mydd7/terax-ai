@@ -7,8 +7,8 @@ import {
 
 function deps(
   move: (expectedConflict: string | null) => Promise<FsMoveResult>,
-  overrides: Partial<Parameters<typeof executeBatchMove>[2]> = {},
-): Parameters<typeof executeBatchMove>[2] {
+  overrides: Partial<Parameters<typeof executeBatchMove>[3]> = {},
+): Parameters<typeof executeBatchMove>[3] {
   return {
     move: (_item, expectedConflict) => move(expectedConflict),
     resolveConflict: async () => "replace",
@@ -22,24 +22,22 @@ function deps(
 describe("excludeNestedSources", () => {
   it("keeps unrelated paths whose names merely share a prefix", () => {
     expect(
-      excludeNestedSources(["/repo/src", "/repo/src-backup/a.ts"]),
+      excludeNestedSources(["/repo/src", "/repo/src-backup/a.ts"], false),
     ).toEqual(["/repo/src", "/repo/src-backup/a.ts"]);
   });
 
   it("drops descendants at any selected depth", () => {
     expect(
-      excludeNestedSources([
-        "/repo/src",
-        "/repo/src/a.ts",
-        "/repo/src/deep/b.ts",
-        "/repo/other.ts",
-      ]),
+      excludeNestedSources(
+        ["/repo/src", "/repo/src/a.ts", "/repo/src/deep/b.ts", "/repo/other.ts"],
+        false,
+      ),
     ).toEqual(["/repo/src", "/repo/other.ts"]);
   });
 
   it("normalizes Windows descendants before filtering", () => {
     expect(
-      excludeNestedSources(["C:\\repo\\src", "C:\\repo\\src\\a.ts"]),
+      excludeNestedSources(["C:\\repo\\src", "C:\\repo\\src\\a.ts"], true),
     ).toEqual(["C:/repo/src"]);
   });
 });
@@ -60,6 +58,7 @@ describe("executeBatchMove", () => {
     const result = await executeBatchMove(
       ["/repo/a.ts", "/repo/dest/already.ts", "/repo/b.ts"],
       "/repo/dest",
+      false,
       deps(move, { onMoved }),
     );
 
@@ -73,6 +72,7 @@ describe("executeBatchMove", () => {
     await executeBatchMove(
       ["C:\\repo\\a.ts"],
       "C:\\repo\\dest",
+      true,
       deps(async () => ({ status: "moved" }), { onMoved }),
     );
     expect(onMoved).toHaveBeenCalledWith({
@@ -80,6 +80,27 @@ describe("executeBatchMove", () => {
       to: "C:/repo/dest/a.ts",
       name: "a.ts",
     });
+  });
+
+  it("moves a POSIX filename containing a literal backslash", async () => {
+    const options = deps(async () => ({ status: "moved" }));
+    const move = vi.spyOn(options, "move");
+    const result = await executeBatchMove(
+      ["/repo/src", "/repo/src\\notes.ts"],
+      "/repo/dest",
+      false,
+      options,
+    );
+
+    expect(result.moved).toBe(2);
+    expect(move).toHaveBeenCalledWith(
+      {
+        from: "/repo/src\\notes.ts",
+        to: "/repo/dest/src\\notes.ts",
+        name: "src\\notes.ts",
+      },
+      null,
+    );
   });
 
   it("asks only after the backend reports a real filesystem conflict", async () => {
@@ -96,6 +117,7 @@ describe("executeBatchMove", () => {
     const result = await executeBatchMove(
       ["/repo/Foo.ts"],
       "/repo/dest",
+      false,
       deps(move, { resolveConflict }),
     );
 
@@ -112,6 +134,7 @@ describe("executeBatchMove", () => {
     const result = await executeBatchMove(
       ["/repo/a.ts"],
       "/repo/dest",
+      false,
       deps(move, { canReplace: () => false }),
     );
 
@@ -134,6 +157,7 @@ describe("executeBatchMove", () => {
     const result = await executeBatchMove(
       ["/repo/a.ts"],
       "/repo/dest",
+      false,
       deps(move, { resolveConflict, isCurrent: () => current }),
     );
 
@@ -151,6 +175,7 @@ describe("executeBatchMove", () => {
     const result = await executeBatchMove(
       ["/repo/a.ts", "/repo/b.ts"],
       "/repo/dest",
+      false,
       deps(move, { isCurrent: () => current }),
     );
 
@@ -167,6 +192,7 @@ describe("executeBatchMove", () => {
     const result = await executeBatchMove(
       ["/repo/folder"],
       "/repo/dest",
+      false,
       deps(move, { resolveConflict }),
     );
 
