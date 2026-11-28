@@ -6,12 +6,14 @@ import { GhosttyInputController } from "./GhosttyInputController";
 
 const clipboard = vi.hoisted(() => ({
   resolve: (_text: string | null) => {},
+  reject: (_error: Error) => {},
 }));
 
 vi.mock("@/modules/terminal/lib/terminalClipboard", () => ({
   readTerminalClipboard: () =>
-    new Promise<string | null>((resolve) => {
+    new Promise<string | null>((resolve, reject) => {
       clipboard.resolve = resolve;
+      clipboard.reject = reject;
     }),
 }));
 
@@ -79,15 +81,23 @@ function harness(flags: number) {
         getModifierState: () => false,
       }),
     );
+  const pressPaste = () => {
+    key("keydown");
+    key("keyup");
+    return { resolve: clipboard.resolve, reject: clipboard.reject };
+  };
   const sent = () =>
     onData.mock.calls.map(([bytes]) => new TextDecoder().decode(bytes));
-  return { controller, input, key, sent, onData };
+  return { controller, input, key, pressPaste, sent, onData };
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("Ctrl+V forwarded as a key when the clipboard has no text", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it("suppresses Windows Ctrl+V when the preceding copy fails", async () => {
     const { controller, key, sent } = harness(3);
@@ -183,6 +193,64 @@ describe("Ctrl+V forwarded as a key when the clipboard has no text", () => {
       firstRead("first");
       await settle();
       expect(sent()).toEqual(["first", "second"]);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("delivers a rejected read as empty in key order", async () => {
+    const { controller, pressPaste, sent } = harness(3);
+    try {
+      const firstRead = pressPaste();
+      pressPaste().reject(new Error("clipboard read failed"));
+      pressPaste().resolve("third");
+      await settle();
+      expect(sent()).toEqual([]);
+
+      firstRead.resolve("first");
+      await settle();
+      expect(sent()).toEqual(["first", PRESS, RELEASE, "third"]);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("skips a stalled read and delivers later pastes in key order", async () => {
+    vi.useFakeTimers();
+    const { controller, pressPaste, sent } = harness(3);
+    try {
+      const stalledRead = pressPaste();
+      const secondRead = pressPaste();
+      pressPaste().resolve("third");
+      secondRead.resolve("second");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sent()).toEqual([]);
+
+      await vi.advanceTimersToNextTimerAsync();
+      expect(sent()).toEqual(["second", "third"]);
+
+      stalledRead.resolve("late");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sent()).toEqual(["second", "third"]);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("clears pending reads and queued results on disposal", async () => {
+    vi.useFakeTimers();
+    const { controller, pressPaste, sent } = harness(3);
+    try {
+      const pendingRead = pressPaste();
+      pressPaste().resolve("queued");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sent()).toEqual([]);
+
+      controller.dispose();
+      expect(vi.getTimerCount()).toBe(0);
+      pendingRead.resolve("");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sent()).toEqual([]);
     } finally {
       controller.dispose();
     }

@@ -28,10 +28,17 @@ import {
 } from "./terminalWheel";
 
 const DUPLICATE_INPUT_WINDOW_MS = 75;
+const PASTE_READ_TIMEOUT_MS = 3000;
+const MAX_QUEUED_PASTES = 32;
 const MODE_CURSOR_KEYS = 1;
 const MODE_ALTERNATE_SCROLL = 1007;
 
 type InputSource = "keydown" | "beforeinput" | "composition" | "paste";
+
+type QueuedPaste = {
+  readonly cancel: () => void;
+  deliver?: () => void;
+};
 
 export type GhosttyInputControllerOptions = {
   readonly model: GhosttyTerminalModelApi;
@@ -71,7 +78,7 @@ export class GhosttyInputController {
     { released: boolean; mods?: KeyEvent["mods"] }
   >();
   private readonly wheel = new WheelAccumulator();
-  private pasteDelivery: Promise<void> = Promise.resolve();
+  private readonly pasteQueue = new Set<QueuedPaste>();
   private composing = false;
   private optionKeys = 0;
   private lastData = "";
@@ -173,6 +180,9 @@ export class GhosttyInputController {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    for (const entry of this.pasteQueue) entry.cancel();
+    this.pasteQueue.clear();
+    this.pasteKeys.clear();
     this.imeAnchor?.end();
     this.mouse?.dispose();
     this.nativeSelection?.dispose();
@@ -292,10 +302,7 @@ export class GhosttyInputController {
       released: false,
     };
     if (data) this.pasteKeys.set(code, waiting);
-    // Start each read immediately, but deliver its result in key press order.
-    const read = readTerminalClipboard();
-    const ready = Promise.all([this.pasteDelivery, read]);
-    const delivery = ready.then(([, text]) => {
+    const deliver = (text: string | null) => {
       if (this.pasteKeys.get(code) === waiting) this.pasteKeys.delete(code);
       if (this.disposed || text === null) return;
       if (text) {
@@ -309,7 +316,7 @@ export class GhosttyInputController {
           : encoded,
       );
       // A press that went out as plain text has no release to report.
-      if (encoded[0] !== 0x1b) return;
+      if (this.disposed || encoded[0] !== 0x1b) return;
       if (!waiting.released) {
         this.pressedKeys.set(code, data);
         return;
@@ -320,11 +327,48 @@ export class GhosttyInputController {
         mods: waiting.mods ?? data.mods,
       });
       if (release.byteLength > 0) this.options.onData(release);
+    };
+
+    if (this.pasteQueue.size === MAX_QUEUED_PASTES) {
+      const oldest = this.pasteQueue.values().next().value;
+      if (oldest) {
+        this.pasteQueue.delete(oldest);
+        oldest.cancel();
+      }
+    }
+    let expire = () => {};
+    const deadline = new Promise<null>((resolve) => {
+      expire = () => resolve(null);
     });
-    this.pasteDelivery = delivery.catch((error: unknown) => {
-      if (this.pasteKeys.get(code) === waiting) this.pasteKeys.delete(code);
-      console.error("[terax] terminal paste failed:", error);
-    });
+    const timer = setTimeout(expire, PASTE_READ_TIMEOUT_MS);
+    const entry: QueuedPaste = {
+      cancel: () => {
+        clearTimeout(timer);
+        expire();
+        deliver(null);
+      },
+    };
+    this.pasteQueue.add(entry);
+    const finish = (text: string | null) => {
+      clearTimeout(timer);
+      if (this.pasteQueue.has(entry)) entry.deliver = () => deliver(text);
+      this.drainPastes();
+    };
+    void Promise.race([readTerminalClipboard(), deadline])
+      .catch(() => "")
+      .then(finish);
+  }
+
+  private drainPastes(): void {
+    for (const entry of this.pasteQueue) {
+      if (!entry.deliver) return;
+      this.pasteQueue.delete(entry);
+      try {
+        entry.deliver();
+      } catch (error) {
+        console.error("[terax] terminal paste failed:", error);
+      }
+    }
   }
 
   private encodeKeyDown(
