@@ -1,3 +1,5 @@
+import { IS_WINDOWS } from "@/lib/platform";
+
 // Files opened through the palette, newest first, kept per workspace and root.
 // localStorage keeps it off the preferences store and its IPC broadcast path.
 
@@ -35,13 +37,34 @@ export function recordInStore(
   return next;
 }
 
+function isLegacyLocalPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  if (/^(?:\/\/\?\/)?[a-z]:\//i.test(normalized)) return true;
+  if (normalized.startsWith("//")) {
+    const [, , host, share] = normalized
+      .toLowerCase()
+      .replace(/^\/\/\?\/unc\//, "//")
+      .split("/", 4);
+    if (host === "wsl$" || host === "wsl.localhost") return false;
+    if (host && share && host !== "?" && host !== ".") return true;
+  }
+  // A slash-rooted path on Windows could belong to any WSL distro.
+  return !IS_WINDOWS && path.startsWith("/");
+}
+
 function sanitize(raw: unknown): RecentStore {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const out: RecentStore = {};
   for (const [root, list] of Object.entries(raw)) {
     if (!Array.isArray(list)) continue;
-    out[root] = list
-      .filter((p): p is string => typeof p === "string")
+    const legacy = !root.includes("\0");
+    const key = legacy ? recentKey(root, "local") : root;
+    if (legacy && (!isLegacyLocalPath(root) || key in raw)) continue;
+    out[key] = list
+      .filter(
+        (p): p is string =>
+          typeof p === "string" && (!legacy || isLegacyLocalPath(p)),
+      )
       .slice(0, MAX_RECENT_FILES);
   }
   return out;
@@ -57,7 +80,7 @@ function read(): RecentStore {
 }
 
 function recentKey(root: string, workspace: string): string {
-  return workspace === "local" ? root : `${workspace}\0${root}`;
+  return `${workspace}\0${root}`;
 }
 
 export function recentFiles(root: string, workspace = "local"): string[] {
