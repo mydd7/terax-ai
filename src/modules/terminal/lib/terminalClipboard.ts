@@ -2,10 +2,16 @@ import { isTauri } from "@tauri-apps/api/core";
 
 let pendingNativeWrite: Promise<void> | null = null;
 
-export async function readTerminalClipboard(): Promise<string> {
+export async function readTerminalClipboard(): Promise<string | null> {
+  if (pendingNativeWrite) {
+    try {
+      await pendingNativeWrite;
+    } catch {
+      return null;
+    }
+  }
   try {
     if (isTauri()) {
-      if (pendingNativeWrite) await pendingNativeWrite;
       const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
       return await readText();
     }

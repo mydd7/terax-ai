@@ -55,7 +55,7 @@ describe("terminal clipboard", () => {
     const copy = writeTerminalClipboard("failed");
     const paste = readTerminalClipboard();
     await expect(copy).rejects.toThrow("clipboard busy");
-    await expect(paste).resolves.toBe("");
+    await expect(paste).resolves.toBeNull();
     expect(native.readText).not.toHaveBeenCalled();
     native.writeText.mockResolvedValueOnce(undefined);
     native.readText.mockResolvedValueOnce("retry");
@@ -75,8 +75,8 @@ describe("terminal clipboard", () => {
     },
   );
 
-  it("does not fall back to permission-gated web reads after an IPC failure", async () => {
-    native.readText.mockRejectedValue(new Error("clipboard busy"));
+  it("returns empty text for an image-only clipboard without a web read", async () => {
+    native.readText.mockRejectedValue(new Error("no text format available"));
     await expect(readTerminalClipboard()).resolves.toBe("");
     expect(web.readText).not.toHaveBeenCalled();
     native.readText.mockResolvedValue("retry");
