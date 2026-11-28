@@ -1,5 +1,5 @@
 import type { GhosttyTerminalModelApi } from "@/modules/terminal/ghostty/GhosttyTerminalModel";
-import { KeyAction, type KeyEvent } from "@terax/ghostty-core/protocol";
+import { KeyAction, type KeyEvent, Mods } from "@terax/ghostty-core/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, FakeTextArea } from "./fakeTextArea";
 import { GhosttyInputController } from "./GhosttyInputController";
@@ -47,7 +47,9 @@ function harness(flags: number) {
         flags === 0
           ? "\x16"
           : event.action === KeyAction.RELEASE
-            ? RELEASE
+            ? (event.mods & Mods.CTRL) !== 0
+              ? RELEASE
+              : "\x1b[118;1:3u"
             : PRESS,
       ),
     kittyKeyboardFlags: () => flags,
@@ -62,17 +64,17 @@ function harness(flags: number) {
     isMac: false,
     isWindows: true,
   });
-  const key = (type: "keydown" | "keyup") =>
+  const key = (type: "keydown" | "keyup", repeat = false, ctrlKey = true) =>
     input.dispatchEvent(
       Object.assign(new Event(type, { bubbles: true, cancelable: true }), {
         key: "v",
         code: "KeyV",
         keyCode: 86,
-        ctrlKey: true,
+        ctrlKey,
         shiftKey: false,
         altKey: false,
         metaKey: false,
-        repeat: false,
+        repeat,
         isComposing: false,
         getModifierState: () => false,
       }),
@@ -86,6 +88,59 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("Ctrl+V forwarded as a key when the clipboard has no text", () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it.each([false, true])(
+    "uses V's release modifiers even when the clipboard resolves late (%s)",
+    async (late) => {
+      const { controller, key, sent } = harness(3);
+      try {
+        key("keydown");
+        if (late) key("keyup", false, false);
+        clipboard.resolve("");
+        await settle();
+        if (!late) key("keyup", false, false);
+        expect(sent()).toEqual([PRESS, "\x1b[118;1:3u"]);
+      } finally {
+        controller.dispose();
+      }
+    },
+  );
+
+  it("does not replace a pending press when the held paste key repeats", async () => {
+    const { controller, key, sent } = harness(3);
+    try {
+      key("keydown");
+      const firstRead = clipboard.resolve;
+      key("keydown", true);
+      const repeatRead = clipboard.resolve;
+      key("keyup");
+      firstRead("");
+      await settle();
+      expect(sent()).toEqual([PRESS, RELEASE]);
+      expect(repeatRead).toBe(firstRead);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("still accepts a separate paste press while an earlier read is pending", async () => {
+    const { controller, key, sent } = harness(3);
+    try {
+      key("keydown");
+      const firstRead = clipboard.resolve;
+      key("keyup");
+      key("keydown");
+      const secondRead = clipboard.resolve;
+      key("keyup");
+      expect(secondRead).not.toBe(firstRead);
+      firstRead("");
+      secondRead("");
+      await settle();
+      expect(sent()).toEqual([PRESS, RELEASE, PRESS, RELEASE]);
+    } finally {
+      controller.dispose();
+    }
+  });
 
   it("sends the release with the press when the key is up before the read ends", async () => {
     const { controller, key, sent } = harness(3);

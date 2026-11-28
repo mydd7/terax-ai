@@ -66,7 +66,10 @@ export class GhosttyInputController {
   private readonly keyContext: KeyContext;
   private readonly pressedKeys = new Map<string, KeyEvent>();
   /** Ctrl+V presses waiting on the clipboard: the key may be released before the read ends. */
-  private readonly pasteKeys = new Map<string, { released: boolean }>();
+  private readonly pasteKeys = new Map<
+    string,
+    { released: boolean; mods?: KeyEvent["mods"] }
+  >();
   private readonly wheel = new WheelAccumulator();
   private composing = false;
   private optionKeys = 0;
@@ -277,12 +280,16 @@ export class GhosttyInputController {
     // Ctrl+V is also a key: an application that reads the clipboard itself (an
     // image paste) gets it when there is no text to paste.
     const { code } = event;
+    // A repeat must not replace the pending press that the next keyup releases.
+    if (event.repeat && this.pasteKeys.has(code)) return;
     const flags = this.kittyFlags();
     const data = route.forwardKeyWhenEmpty
       ? buildKeyEvent(event, Key.V, KeyAction.PRESS, flags)
       : null;
     const encoded = data ? this.options.model.encodeKey(data) : null;
-    const waiting = { released: false };
+    const waiting: { released: boolean; mods?: KeyEvent["mods"] } = {
+      released: false,
+    };
     if (data) this.pasteKeys.set(code, waiting);
     void readTerminalClipboard().then((text) => {
       if (this.pasteKeys.get(code) === waiting) this.pasteKeys.delete(code);
@@ -306,6 +313,7 @@ export class GhosttyInputController {
       const release = this.options.model.encodeKey({
         ...data,
         action: KeyAction.RELEASE,
+        mods: waiting.mods ?? data.mods,
       });
       if (release.byteLength > 0) this.options.onData(release);
     });
@@ -331,7 +339,10 @@ export class GhosttyInputController {
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
     this.trackOptionKeys(event, false);
     const waiting = this.pasteKeys.get(event.code);
-    if (waiting) waiting.released = true;
+    if (waiting && !waiting.released) {
+      waiting.released = true;
+      waiting.mods = keyModifiers(event, this.kittyFlags());
+    }
     const pressed = this.pressedKeys.get(event.code);
     if (!pressed) return;
     this.pressedKeys.delete(event.code);
