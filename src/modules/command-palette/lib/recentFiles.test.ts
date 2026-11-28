@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   MAX_RECENT_FILES,
   recentFiles,
@@ -6,6 +6,13 @@ import {
   recordRecentFile,
   touchRecent,
 } from "./recentFiles";
+
+const platform = vi.hoisted(() => ({ isWindows: false }));
+vi.mock("@/lib/platform", () => ({
+  get IS_WINDOWS() {
+    return platform.isWindows;
+  },
+}));
 
 describe("touchRecent", () => {
   it("moves an existing path to the front without duplicating it", () => {
@@ -50,4 +57,72 @@ describe("persistence without localStorage", () => {
     expect(recentFiles("/a")).toEqual([]);
     expect(() => recordRecentFile("/a", "/a/x.ts")).not.toThrow();
   });
+});
+
+it("keeps separate histories for identical roots in local and WSL workspaces", () => {
+  const root = "/repo";
+  const entries = new Map([
+    [
+      "terax-palette-recent-files",
+      JSON.stringify({ [root]: ["/repo/local.ts"] }),
+    ],
+  ]);
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => entries.set(key, value),
+  });
+  try {
+    expect(recentFiles(root, "wsl:Ubuntu")).toEqual([]);
+    recordRecentFile(root, "/repo/ubuntu.ts", "wsl:Ubuntu");
+    recordRecentFile(root, "/repo/debian.ts", "wsl:Debian");
+    expect(recentFiles(root, "local")).toEqual(["/repo/local.ts"]);
+    expect(recentFiles(root, "wsl:Ubuntu")).toEqual(["/repo/ubuntu.ts"]);
+    expect(recentFiles(root, "wsl:Debian")).toEqual(["/repo/debian.ts"]);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("upgrades only unambiguously local history from mixed legacy buckets", () => {
+  const unixRoot = "/home/me/repo";
+  const driveRoot = "C:/repo";
+  const shareRoot = "//server/share";
+  const wslRoot = "//WSL.LOCALHOST/Ubuntu/repo";
+  const wslUncRoot = "\\\\?\\UNC\\wsl$\\Debian\\repo";
+  const legacy = {
+    [unixRoot]: [`${unixRoot}/old.ts`],
+    [driveRoot]: [`${wslRoot}/old.ts`, `${driveRoot}/old.ts`],
+    [shareRoot]: [`${shareRoot}/old.ts`],
+    [wslRoot]: [`${wslRoot}/old.ts`],
+    [wslUncRoot]: [`${wslUncRoot}\\old.ts`],
+  };
+  const entries = new Map([
+    ["terax-palette-recent-files", JSON.stringify(legacy)],
+  ]);
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => entries.set(key, value),
+  });
+  try {
+    expect(recentFiles(unixRoot)).toEqual(legacy[unixRoot]);
+
+    platform.isWindows = true;
+    expect(recentFiles(driveRoot)).toEqual([`${driveRoot}/old.ts`]);
+    expect(recentFiles(shareRoot)).toEqual(legacy[shareRoot]);
+    expect(recentFiles(unixRoot)).toEqual([]);
+    expect(recentFiles(unixRoot, "wsl:Ubuntu")).toEqual([]);
+    expect(recentFiles(wslRoot)).toEqual([]);
+    expect(recentFiles(wslUncRoot)).toEqual([]);
+
+    recordRecentFile(unixRoot, `${unixRoot}/new-local.ts`);
+    recordRecentFile(unixRoot, `${unixRoot}/new-wsl.ts`, "wsl:Ubuntu");
+    expect(recentFiles(unixRoot)).toEqual([`${unixRoot}/new-local.ts`]);
+    expect(recentFiles(unixRoot, "wsl:Ubuntu")).toEqual([
+      `${unixRoot}/new-wsl.ts`,
+    ]);
+    expect(recentFiles(driveRoot)).toEqual([`${driveRoot}/old.ts`]);
+  } finally {
+    platform.isWindows = false;
+    vi.unstubAllGlobals();
+  }
 });
