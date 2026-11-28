@@ -79,10 +79,18 @@ export class LazyTerminalLinks {
       hearing = on;
       if (on) {
         target.addEventListener("pointerup", onRelease);
+        target.addEventListener("lostpointercapture", onRelease);
+        keyTarget.addEventListener("pointerup", onOutsideRelease, {
+          capture: true,
+        });
         keyTarget.addEventListener("keyup", onKey);
         keyTarget.addEventListener("blur", onLeave);
       } else {
         target.removeEventListener("pointerup", onRelease);
+        target.removeEventListener("lostpointercapture", onRelease);
+        keyTarget.removeEventListener("pointerup", onOutsideRelease, {
+          capture: true,
+        });
         keyTarget.removeEventListener("keyup", onKey);
         keyTarget.removeEventListener("blur", onLeave);
       }
@@ -102,6 +110,11 @@ export class LazyTerminalLinks {
 
     const onRelease = (event: PointerEvent): void => {
       if (last) push(event);
+    };
+
+    const onOutsideRelease = (event: PointerEvent): void => {
+      if (clickStamp !== null && !event.composedPath().includes(target))
+        onRelease(event);
     };
 
     const onKey = (event: KeyboardEvent): void => {
@@ -171,7 +184,8 @@ export class LazyTerminalLinks {
       if (active) return active.ingest(event);
       if (event.type === "pointermove" || event.type === "pointerdown")
         onPointer(event as PointerEvent);
-      else if (event.type === "pointerup") onRelease(event as PointerEvent);
+      else if (event.type === "pointerup" || event.type === "lostpointercapture")
+        onRelease(event as PointerEvent);
       else if (event.type === "keydown" || event.type === "keyup")
         onKey(event as KeyboardEvent);
       else onLeave();

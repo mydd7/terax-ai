@@ -6,7 +6,12 @@ import {
 } from "./TerminalLinkInteraction";
 import type { TerminalLinkHit } from "./terminalLinks";
 
-type Flags = { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean };
+type Flags = {
+  metaKey?: boolean;
+  ctrlKey?: boolean;
+  shiftKey?: boolean;
+  pointerId?: number;
+};
 
 function pointerEvent(type: string, x: number, y: number, flags: Flags = {}) {
   const event = new Event(type, { cancelable: true });
@@ -14,6 +19,8 @@ function pointerEvent(type: string, x: number, y: number, flags: Flags = {}) {
     clientX: x,
     clientY: y,
     button: 0,
+    buttons: type === "pointerup" ? 0 : 1,
+    pointerId: 1,
     pointerType: "mouse",
     metaKey: false,
     ctrlKey: false,
@@ -112,6 +119,16 @@ describe("TerminalLinkInteraction", () => {
     const up = t.fire("pointerup", 52, 15, { ctrlKey: true });
     expect(t.onActivate).toHaveBeenCalledWith(LINK);
     expect(up.defaultPrevented).toBe(true);
+  });
+
+  it("only completes a modified click for the pointer that pressed the link", () => {
+    const t = setup();
+    t.fire("pointerdown", 50, 15, { ctrlKey: true, pointerId: 1 });
+    t.fire("pointermove", 90, 15, { ctrlKey: true, pointerId: 2 });
+    t.fire("pointerup", 50, 15, { ctrlKey: true, pointerId: 2 });
+    expect(t.onActivate).not.toHaveBeenCalled();
+    t.fire("pointerup", 50, 15, { ctrlKey: true, pointerId: 1 });
+    expect(t.onActivate).toHaveBeenCalledOnce();
   });
 
   it.each([false, true])(

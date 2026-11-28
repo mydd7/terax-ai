@@ -42,6 +42,7 @@ export function deferTerminalLinks(
     "pointerup",
     "pointerleave",
     "pointercancel",
+    "lostpointercapture",
     "keydown",
     "keyup",
     "blur",
@@ -49,7 +50,9 @@ export function deferTerminalLinks(
   const capture = (event: Event) => {
     if (event.type === "pointerdown" && clickStamp === null)
       clickStamp = terminalLinkReplayStamp(options);
+    // A pressed pointer can move away and back before the code loads.
     if (
+      clickStamp === null &&
       event.type === "pointermove" &&
       events[events.length - 1]?.type === "pointermove"
     )
@@ -57,13 +60,27 @@ export function deferTerminalLinks(
     events.push(event);
     if (events.length > 64) events.shift();
   };
+  const captureOutsideRelease = (event: PointerEvent) => {
+    if (clickStamp !== null && !event.composedPath().includes(options.target))
+      capture(event);
+  };
   const listen = (add: boolean) => {
     for (const type of types) {
-      const target = type.startsWith("pointer")
-        ? options.target
-        : options.keyTarget;
+      const target =
+        type.startsWith("pointer") || type === "lostpointercapture"
+          ? options.target
+          : options.keyTarget;
       if (add) target.addEventListener(type, capture);
       else target.removeEventListener(type, capture);
+    }
+    if (add) {
+      options.keyTarget.addEventListener("pointerup", captureOutsideRelease, {
+        capture: true,
+      });
+    } else {
+      options.keyTarget.removeEventListener("pointerup", captureOutsideRelease, {
+        capture: true,
+      });
     }
   };
   listen(true);

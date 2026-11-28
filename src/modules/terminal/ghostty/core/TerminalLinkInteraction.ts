@@ -1,3 +1,4 @@
+import { selectionChangedByPointer } from "../selection/TerminalSelectionController";
 import type { TerminalLinkHit } from "./terminalLinks";
 
 export type LinkCell = { readonly row: number; readonly column: number };
@@ -34,7 +35,7 @@ type Pointer = {
   target: EventTarget | null;
 };
 
-type LinkPress = { hit: TerminalLinkHit; x: number; y: number };
+type LinkPress = { hit: TerminalLinkHit; pointerId: number; x: number; y: number };
 
 function movedPastClickSlop(press: LinkPress, event: PointerEvent): boolean {
   // Permit a little pointer jitter, but only a click may open the link.
@@ -65,6 +66,7 @@ export class TerminalLinkInteraction {
     target.addEventListener("pointerup", this.handleUp);
     target.addEventListener("pointerleave", this.handleLeave);
     target.addEventListener("pointercancel", this.handleLeave);
+    target.addEventListener("lostpointercapture", this.disarmPointer);
   }
 
   /** True while a link is highlighted or could be: the surface skips work otherwise. */
@@ -83,6 +85,9 @@ export class TerminalLinkInteraction {
         break;
       case "pointerup":
         this.handleUp(event as PointerEvent);
+        break;
+      case "lostpointercapture":
+        this.disarmPointer(event as PointerEvent);
         break;
       case "keydown":
       case "keyup":
@@ -118,6 +123,7 @@ export class TerminalLinkInteraction {
     target.removeEventListener("pointerup", this.handleUp);
     target.removeEventListener("pointerleave", this.handleLeave);
     target.removeEventListener("pointercancel", this.handleLeave);
+    target.removeEventListener("lostpointercapture", this.disarmPointer);
     this.unbindKeys();
     this.pointer = null;
     this.down = null;
@@ -126,7 +132,16 @@ export class TerminalLinkInteraction {
 
   private readonly handleMove = (event: PointerEvent): void => {
     if (event.pointerType === "touch") return;
-    if (this.down && movedPastClickSlop(this.down, event)) this.down = null;
+    if (this.down) {
+      if (event.pointerId !== this.down.pointerId) return;
+      if (
+        (event.buttons & 1) === 0 ||
+        movedPastClickSlop(this.down, event) ||
+        selectionChangedByPointer.has(event)
+      ) {
+        this.down = null;
+      }
+    }
     this.observe(event);
     this.bindKeys();
     this.evaluate();
@@ -139,15 +154,31 @@ export class TerminalLinkInteraction {
     this.down = null;
     if (!this.pointer?.modifier) return;
     this.evaluate();
-    if (this.hit)
-      this.down = { hit: this.hit, x: event.clientX, y: event.clientY };
+    if (this.hit) {
+      this.down = {
+        hit: this.hit,
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+      };
+    }
   };
 
   private readonly handleUp = (event: PointerEvent): void => {
-    if (event.button !== 0) return;
     const down = this.down;
+    if (!down || event.button !== 0 || event.pointerId !== down.pointerId)
+      return;
     this.down = null;
-    if (!down || movedPastClickSlop(down, event)) return;
+    const { target } = this.options;
+    if (
+      (event.target &&
+        event.target !== target &&
+        (!(event.target instanceof Node) || !target.contains(event.target))) ||
+      movedPastClickSlop(down, event) ||
+      selectionChangedByPointer.has(event)
+    ) {
+      return;
+    }
     this.observe(event);
     if (!this.pointer?.modifier) return;
     this.cellKey = -1;
@@ -156,6 +187,20 @@ export class TerminalLinkInteraction {
     if (!hit || !sameLink(hit, down.hit)) return;
     event.preventDefault();
     this.options.onActivate(hit);
+  };
+
+  private readonly handleOutsideUp = (event: PointerEvent): void => {
+    if (
+      this.down &&
+      event.button === 0 &&
+      !event.composedPath().includes(this.options.target)
+    ) {
+      this.disarmPointer(event);
+    }
+  };
+
+  private readonly disarmPointer = (event: PointerEvent): void => {
+    if (this.down && event.pointerId === this.down.pointerId) this.down = null;
   };
 
   private readonly handleLeave = (): void => {
@@ -245,6 +290,7 @@ export class TerminalLinkInteraction {
     keys.addEventListener("keydown", this.handleKey);
     keys.addEventListener("keyup", this.handleKey);
     keys.addEventListener("blur", this.handleBlur);
+    keys.addEventListener("pointerup", this.handleOutsideUp, { capture: true });
   }
 
   private unbindKeys(): void {
@@ -254,6 +300,9 @@ export class TerminalLinkInteraction {
     keys.removeEventListener("keydown", this.handleKey);
     keys.removeEventListener("keyup", this.handleKey);
     keys.removeEventListener("blur", this.handleBlur);
+    keys.removeEventListener("pointerup", this.handleOutsideUp, {
+      capture: true,
+    });
   }
 }
 

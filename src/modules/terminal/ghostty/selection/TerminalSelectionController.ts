@@ -7,6 +7,9 @@ import type {
 type SelectionMode = "character" | "word" | "line";
 const MOUSE_DRAG_THRESHOLD_PX = 3;
 
+// Link activation needs this even when the pointer event is replayed later.
+export const selectionChangedByPointer = new WeakSet<Event>();
+
 export type TerminalSelectionBounds = {
   readonly startLine: number;
   readonly startColumn: number;
@@ -262,6 +265,7 @@ export class TerminalSelectionController {
       this.selection.rectangular || event.altKey,
     );
     if (selectionsEqual(this.selection, selection)) return;
+    if (event instanceof Event) selectionChangedByPointer.add(event);
     this.selection = selection;
     this.meaningful = true;
     this.commitSelection();

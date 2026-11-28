@@ -72,6 +72,20 @@ describe("deferTerminalLinks", () => {
     links.dispose();
   });
 
+  it("replays outward movement even when the pressed pointer returns before loading", async () => {
+    const links = deferTerminalLinks(options);
+    const events = [
+      Object.assign(new Event("pointerdown"), { clientX: 10, buttons: 1 }),
+      Object.assign(new Event("pointermove"), { clientX: 30, buttons: 1 }),
+      Object.assign(new Event("pointermove"), { clientX: 10, buttons: 1 }),
+      Object.assign(new Event("pointerup"), { clientX: 10, buttons: 0 }),
+    ];
+    for (const event of events) options.target.dispatchEvent(event);
+    await tick();
+    expect(instance.ingest.mock.calls.map(([event]) => event)).toEqual(events);
+    links.dispose();
+  });
+
   it("reports a trigger that fails to start instead of throwing", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     // biome-ignore lint/complexity/useArrowFunction: it is called with `new`

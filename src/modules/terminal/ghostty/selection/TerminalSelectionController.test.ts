@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { TeraxGhostty } from "@terax/ghostty-core/adapted";
 import { AdaptedGhosttyTerminalModel } from "@/modules/terminal/ghostty/AdaptedGhosttyTerminalModel";
 import { describe, expect, it, vi } from "vitest";
+import { TerminalLinkInteraction } from "../core/TerminalLinkInteraction";
 import type {
   GhosttyTerminalModelApi,
   TerminalBufferSelection,
@@ -217,6 +218,37 @@ describe("terminal selection pointer ownership", () => {
       }
     },
   );
+
+  it("disarms a modified link press when a three-pixel drag selects across a cell edge", () => {
+    const fixture = dragFixture();
+    const onActivate = vi.fn();
+    const links = new TerminalLinkInteraction({
+      target: fixture.target as unknown as HTMLElement,
+      keyTarget: new EventTarget() as unknown as Window,
+      isModifier: (event) => event.ctrlKey,
+      cellAt: (x) => ({ row: 0, column: Math.floor(x / 10) }),
+      blocked: () => false,
+      hitAt: () => ({
+        kind: "url",
+        uri: "https://example.com",
+        text: "https://example.com",
+        segments: [{ row: 0, start: 1, end: 3 }],
+      }),
+      overlay: { show: vi.fn(), hide: vi.fn() },
+      setPointerCursor: vi.fn(),
+      onActivate,
+    });
+    try {
+      fixture.pointer("pointerdown", 19, 10, true);
+      fixture.pointer("pointermove", 22, 10, true);
+      expect(fixture.controller.value?.focus.column).toBe(2);
+      fixture.pointer("pointerup", 22, 10, true);
+      expect(onActivate).not.toHaveBeenCalled();
+    } finally {
+      links.dispose();
+      fixture.controller.dispose();
+    }
+  });
 
   it("keeps an active drag precise when it returns near its starting point", () => {
     const fixture = dragFixture();
@@ -476,11 +508,12 @@ function dragFixture(
     controller,
     model,
     onChange,
+    target,
     tracked: () => tracked,
     setBottom: (value: number) => {
       bottom = value;
     },
-    pointer: (type: string, clientX: number, clientY = 10) =>
+    pointer: (type: string, clientX: number, clientY = 10, ctrlKey = false) =>
       target.dispatchEvent(
         Object.assign(new Event(type, { cancelable: true }), {
           pointerId: 1,
@@ -488,6 +521,7 @@ function dragFixture(
           buttons: type === "pointerup" ? 0 : buttons,
           pointerType: "mouse",
           detail: 0,
+          ctrlKey,
           shiftKey: false,
           altKey: false,
           clientX,
