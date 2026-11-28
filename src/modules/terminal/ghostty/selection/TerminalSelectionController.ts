@@ -5,6 +5,7 @@ import type {
 } from "../GhosttyTerminalModel";
 
 type SelectionMode = "character" | "word" | "line";
+const MOUSE_DRAG_THRESHOLD_PX = 3;
 
 export type TerminalSelectionBounds = {
   readonly startLine: number;
@@ -35,6 +36,7 @@ export class TerminalSelectionController {
     null;
   private mode: SelectionMode = "character";
   private pointerId: number | null = null;
+  private mousePress: { x: number; y: number } | null = null;
   private meaningful = false;
   private lastClientX = 0;
   private lastClientY = 0;
@@ -45,6 +47,7 @@ export class TerminalSelectionController {
     this.selection = options.model.trackedSelection?.() ?? null;
     this.meaningful = this.selection !== null;
     options.target.addEventListener("pointerdown", this.handlePointerDown);
+    options.target.addEventListener("mousedown", this.handleMouseDown);
     options.target.addEventListener("pointermove", this.handlePointerMove);
     options.target.addEventListener("pointerup", this.handlePointerUp);
     options.target.addEventListener("pointercancel", this.handleLostCapture);
@@ -111,6 +114,7 @@ export class TerminalSelectionController {
     this.suspend();
     const { target } = this.options;
     target.removeEventListener("pointerdown", this.handlePointerDown);
+    target.removeEventListener("mousedown", this.handleMouseDown);
     target.removeEventListener("pointermove", this.handlePointerMove);
     target.removeEventListener("pointerup", this.handlePointerUp);
     target.removeEventListener("pointercancel", this.handleLostCapture);
@@ -122,6 +126,7 @@ export class TerminalSelectionController {
     const { target } = this.options;
     const pointerId = this.pointerId;
     this.pointerId = null;
+    this.mousePress = null;
     if (!this.meaningful) this.clear();
     if (pointerId !== null && target.hasPointerCapture(pointerId)) {
       target.releasePointerCapture(pointerId);
@@ -145,9 +150,14 @@ export class TerminalSelectionController {
 
     const point = this.pointFromEvent(event);
     if (!point) return;
-    event.preventDefault();
+    // Canceling mouse pointerdown would suppress the native click count.
+    if (event.pointerType !== "mouse") event.preventDefault();
     event.stopPropagation();
     this.pointerId = event.pointerId;
+    this.mousePress =
+      event.pointerType === "mouse"
+        ? { x: event.clientX, y: event.clientY }
+        : null;
     this.options.target.setPointerCapture(event.pointerId);
     this.lastClientX = event.clientX;
     this.lastClientY = event.clientY;
@@ -170,9 +180,40 @@ export class TerminalSelectionController {
     this.options.onChange();
   };
 
+  private readonly handleMouseDown = (event: MouseEvent): void => {
+    if (event.button !== 0 || this.pointerId === null || !this.selection)
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.detail < 2) return;
+    const point = this.pointFromClient(event.clientX, event.clientY, false);
+    if (!point) return;
+
+    this.mode = event.detail === 2 ? "word" : "line";
+    const { anchor, rectangular } = this.selection;
+    this.anchorRange = this.rangeForPoint(anchor, this.mode);
+    this.selection = selectionForRanges(
+      anchor,
+      point,
+      this.anchorRange,
+      this.rangeForPoint(point, this.mode),
+      rectangular,
+    );
+    this.meaningful = true;
+    this.commitSelection();
+    this.options.onChange();
+  };
+
   private readonly handlePointerMove = (event: PointerEvent): void => {
     if (event.pointerId !== this.pointerId || !this.selection) return;
+    // With chorded buttons, releasing the primary button can be a move
+    // rather than a pointerup. Also recover if the release was missed.
+    if ((event.buttons & 1) === 0) {
+      this.suspend();
+      return;
+    }
     event.preventDefault();
+    if (!this.passedMouseDragThreshold(event)) return;
     this.lastClientX = event.clientX;
     this.lastClientY = event.clientY;
     this.updateFocus(event);
@@ -182,7 +223,7 @@ export class TerminalSelectionController {
   private readonly handlePointerUp = (event: PointerEvent): void => {
     if (event.pointerId !== this.pointerId) return;
     event.preventDefault();
-    this.updateFocus(event);
+    if (this.passedMouseDragThreshold(event)) this.updateFocus(event);
     if (!this.meaningful) {
       this.selection = null;
       this.anchorRange = null;
@@ -193,8 +234,18 @@ export class TerminalSelectionController {
       this.options.target.releasePointerCapture(event.pointerId);
     }
     this.pointerId = null;
+    this.mousePress = null;
     this.stopAutoScroll();
   };
+
+  private passedMouseDragThreshold(event: PointerEvent): boolean {
+    if (this.meaningful || !this.mousePress) return true;
+    const dx = event.clientX - this.mousePress.x;
+    const dy = event.clientY - this.mousePress.y;
+    if (dx * dx + dy * dy < MOUSE_DRAG_THRESHOLD_PX ** 2) return false;
+    this.mousePress = null;
+    return true;
+  }
 
   private updateFocus(
     event: Pick<PointerEvent, "clientX" | "clientY" | "altKey">,
@@ -277,24 +328,49 @@ export class TerminalSelectionController {
       return;
     }
     if (this.autoScrollFrame !== null) return;
-    const tick = () => {
+    let lastFrame: number | null = null;
+    let pendingRows = 0;
+    const tick = (now: number) => {
       this.autoScrollFrame = null;
       if (this.pointerId === null) return;
       const currentRect = this.options.target.getBoundingClientRect();
+      // Layout can move the pane back under a stationary pointer between frames.
+      if (
+        this.lastClientY >= currentRect.top &&
+        this.lastClientY <= currentRect.bottom
+      ) {
+        return;
+      }
       const overflow =
         this.lastClientY < currentRect.top
           ? this.lastClientY - currentRect.top
           : this.lastClientY - currentRect.bottom;
       const cellHeight = Math.max(1, this.options.cellSize().height);
-      const lines =
-        Math.sign(overflow) *
-        Math.max(1, Math.min(8, Math.ceil(Math.abs(overflow) / cellHeight)));
-      if (!this.options.model.scrollBy(lines)) return;
-      this.updateFocus({
-        clientX: this.lastClientX,
-        clientY: this.lastClientY,
-        altKey: this.selection?.rectangular ?? false,
-      });
+      const direction = Math.sign(overflow);
+      if (pendingRows !== 0 && Math.sign(pendingRows) !== direction)
+        pendingRows = 0;
+      if (lastFrame === null) {
+        pendingRows = direction;
+      } else {
+        // Scroll in rows per second and drop elapsed time after a stalled frame.
+        const elapsed = Math.max(0, Math.min(50, now - lastFrame));
+        const speed = Math.min(
+          120,
+          Math.max(15, (Math.abs(overflow) / cellHeight) * 30),
+        );
+        pendingRows += (direction * speed * elapsed) / 1000;
+      }
+      lastFrame = now;
+      const rows = Math.trunc(pendingRows);
+      pendingRows -= rows;
+      if (rows !== 0) {
+        if (!this.options.model.scrollBy(rows)) return;
+        this.updateFocus({
+          clientX: this.lastClientX,
+          clientY: this.lastClientY,
+          altKey: this.selection?.rectangular ?? false,
+        });
+      }
       this.autoScrollFrame = requestAnimationFrame(tick);
     };
     this.autoScrollFrame = requestAnimationFrame(tick);
