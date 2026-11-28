@@ -1,3 +1,4 @@
+import { IS_WINDOWS } from "@/lib/platform";
 import {
   listenFsChanged,
   parentDir,
@@ -5,6 +6,7 @@ import {
   watchRemove,
 } from "@/modules/explorer/lib/watch";
 import type { Tab } from "@/modules/tabs";
+import { currentWorkspaceEnv } from "@/modules/workspace";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { type RefObject, useEffect, useRef } from "react";
 import type { EditorPaneHandle } from "./EditorPane";
@@ -65,11 +67,12 @@ export function useEditorFileSync({ tabs, tabsRef, editorRefs }: Params) {
   const editorWatchRef = useRef<Set<string>>(new Set());
   const editorFilesRef = useRef<Set<string>>(new Set());
   useEffect(() => {
+    const windowsPaths = IS_WINDOWS && currentWorkspaceEnv().kind === "local";
     const wantDirs = new Set<string>();
     const wantFiles = new Set<string>();
     for (const t of tabs) {
       if (t.kind !== "editor") continue;
-      wantDirs.add(parentDir(t.path));
+      wantDirs.add(parentDir(t.path, windowsPaths));
       wantFiles.add(t.path);
     }
     const prevDirs = editorWatchRef.current;

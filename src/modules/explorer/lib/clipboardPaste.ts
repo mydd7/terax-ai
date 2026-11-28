@@ -1,13 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import type { WorkspaceEnv } from "@/modules/workspace";
+import { parentDir } from "./pathParent";
 
-export function parentDir(path: string, fallback: string): string {
-  const i = path.lastIndexOf("/");
-  if (i === 0) return "/";
-  if (i === 2 && /^[a-z]:\//i.test(path)) return path.slice(0, 3);
-  return i > 0 ? path.slice(0, i) : fallback;
-}
+export { parentDir } from "./pathParent";
 
 // Paste lands inside the selected folder, beside the selected file, or at the
 // root when nothing is selected.
@@ -15,9 +11,12 @@ export function pasteTargetDir(
   selected: string | null,
   isDir: (path: string) => boolean | undefined,
   rootPath: string,
+  windowsPaths: boolean,
 ): string {
   if (!selected) return rootPath;
-  return isDir(selected) ? selected : parentDir(selected, rootPath);
+  return isDir(selected)
+    ? selected
+    : parentDir(selected, windowsPaths, rootPath);
 }
 
 export function isPasteShortcut(
