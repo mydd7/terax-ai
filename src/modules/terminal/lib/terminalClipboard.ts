@@ -1,6 +1,15 @@
 import { isTauri } from "@tauri-apps/api/core";
 
-export async function readTerminalClipboard(): Promise<string> {
+let pendingNativeWrite: Promise<void> | null = null;
+
+export async function readTerminalClipboard(): Promise<string | null> {
+  if (pendingNativeWrite) {
+    try {
+      await pendingNativeWrite;
+    } catch {
+      return null;
+    }
+  }
   try {
     if (isTauri()) {
       const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
@@ -14,8 +23,19 @@ export async function readTerminalClipboard(): Promise<string> {
 
 export async function writeTerminalClipboard(text: string): Promise<void> {
   if (isTauri()) {
-    const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
-    await writeText(text);
+    const write = async () => {
+      const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+      await writeText(text);
+    };
+    const pending = pendingNativeWrite
+      ? pendingNativeWrite.catch(() => {}).then(write)
+      : write();
+    pendingNativeWrite = pending;
+    try {
+      await pending;
+    } finally {
+      if (pendingNativeWrite === pending) pendingNativeWrite = null;
+    }
     return;
   }
   if (!navigator.clipboard) throw new Error("Clipboard is unavailable");

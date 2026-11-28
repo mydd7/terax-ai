@@ -199,6 +199,77 @@ describe("terminal selection pointer ownership", () => {
     fixture.controller.dispose();
   });
 
+  it.each([false, true])(
+    "treats a one-pixel move across a cell edge as a click (pointermove: %s)",
+    (moved) => {
+      const fixture = dragFixture();
+      try {
+        fixture.pointer("pointerdown", 19);
+        if (moved) {
+          fixture.pointer("pointermove", 20);
+          expect(fixture.controller.value).toBeNull();
+        }
+        fixture.pointer("pointerup", 20);
+        expect(fixture.controller.value).toBeNull();
+        expect(fixture.tracked()).toBeNull();
+      } finally {
+        fixture.controller.dispose();
+      }
+    },
+  );
+
+  it("keeps an active drag precise when it returns near its starting point", () => {
+    const fixture = dragFixture();
+    try {
+      fixture.pointer("pointerdown", 19);
+      fixture.pointer("pointermove", 45);
+      fixture.pointer("pointerup", 20);
+      expect(fixture.controller.value?.focus.column).toBe(2);
+    } finally {
+      fixture.controller.dispose();
+    }
+  });
+
+  it("selects words and lines using the native mouse click count", () => {
+    const fixture = dragFixture();
+    try {
+      expect(fixture.pointer("pointerdown", 35)).toBe(true);
+      expect(fixture.mouseDown(2, 35)).toBe(false);
+      fixture.pointer("pointerup", 35);
+      expect(fixture.controller.value?.anchor.column).toBe(2);
+      expect(fixture.controller.value?.focus.column).toBe(6);
+
+      fixture.pointer("pointerdown", 35);
+      fixture.mouseDown(3, 35);
+      fixture.pointer("pointerup", 35);
+      expect(fixture.controller.value?.anchor.column).toBe(0);
+      expect(fixture.controller.value?.focus.column).toBe(12);
+    } finally {
+      fixture.controller.dispose();
+    }
+  });
+
+  it.each([0, 2])(
+    "stops extending a drag when the primary button is no longer down (buttons: %s)",
+    (buttons) => {
+      const fixture = dragFixture();
+      try {
+        fixture.pointer("pointerdown", 15);
+        fixture.pointer("pointermove", 45);
+        expect(fixture.controller.value?.focus.column).toBe(4);
+
+        fixture.setButtons(buttons);
+        expect(fixture.pointer("pointermove", 75)).toBe(true);
+        expect(fixture.hasCapture()).toBe(false);
+        fixture.setButtons(1);
+        fixture.pointer("pointermove", 85);
+        expect(fixture.controller.value?.focus.column).toBe(4);
+      } finally {
+        fixture.controller.dispose();
+      }
+    },
+  );
+
   it("keeps the pending anchor pinned across reflow and discards it on lost capture", () => {
     const fixture = dragFixture();
     fixture.pointer("pointerdown", 15);
@@ -238,6 +309,68 @@ describe("terminal selection pointer ownership", () => {
       expect(frame).toBeUndefined();
     } finally {
       fixture.controller.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("stops autoscrolling when the pane grows under a stationary pointer", () => {
+    let frame: FrameRequestCallback | undefined;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frame = callback;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const fixture = dragFixture();
+    try {
+      fixture.setBottom(400);
+      fixture.pointer("pointerdown", 15);
+      fixture.pointer("pointermove", 45, 450);
+      const tick = frame;
+      expect(tick).toBeDefined();
+
+      fixture.setBottom(480);
+      frame = undefined;
+      tick?.(16);
+
+      expect(fixture.model.scrollBy).not.toHaveBeenCalled();
+      expect(frame).toBeUndefined();
+    } finally {
+      fixture.controller.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("moves the same number of rows on 60 Hz and 144 Hz displays", () => {
+    let frame: FrameRequestCallback | undefined;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frame = callback;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const scrollForOneSecond = (refreshRate: number) => {
+      const fixture = dragFixture();
+      const scrollBy = vi.mocked(fixture.model.scrollBy);
+      scrollBy.mockReturnValue(true);
+      try {
+        fixture.pointer("pointerdown", 15);
+        fixture.pointer("pointermove", 45, 540);
+        for (let i = 0; i <= refreshRate; i++) {
+          const tick = frame;
+          frame = undefined;
+          tick?.((i * 1000) / refreshRate);
+        }
+        return scrollBy.mock.calls.reduce((total, [rows]) => total + rows, 0);
+      } finally {
+        fixture.controller.dispose();
+      }
+    };
+    try {
+      const at60Hz = scrollForOneSecond(60);
+      const at144Hz = scrollForOneSecond(144);
+      expect(at60Hz).toBeGreaterThan(0);
+      expect(at144Hz).toBeGreaterThan(0);
+      expect(Math.abs(at60Hz - at144Hz)).toBeLessThanOrEqual(1);
+    } finally {
       vi.unstubAllGlobals();
     }
   });
@@ -303,6 +436,7 @@ function dragFixture(
 ) {
   let tracked: TerminalBufferSelection | null = null;
   let capture: number | null = null;
+  let bottom = 480;
   const target = Object.assign(new EventTarget(), {
     setPointerCapture: (id: number) => {
       capture = id;
@@ -311,7 +445,7 @@ function dragFixture(
     releasePointerCapture: () => {
       capture = null;
     },
-    getBoundingClientRect: () => ({ left: 0, top: 0, right: 800, bottom: 480 }),
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 800, bottom }),
   });
   const model =
     realModel ??
@@ -324,9 +458,12 @@ function dragFixture(
         tracked = value;
       },
       bufferLineAtViewportRow: (row: number) => row,
+      wordRangeAt: () => ({ start: 2, end: 6 }),
+      lineEndColumn: () => 12,
       scrollBy: vi.fn(() => false),
     } as unknown as GhosttyTerminalModelApi);
   const onChange = vi.fn();
+  let buttons = 1;
   const controller = new TerminalSelectionController({
     model,
     target: target as unknown as HTMLElement,
@@ -340,18 +477,36 @@ function dragFixture(
     model,
     onChange,
     tracked: () => tracked,
+    setBottom: (value: number) => {
+      bottom = value;
+    },
     pointer: (type: string, clientX: number, clientY = 10) =>
       target.dispatchEvent(
         Object.assign(new Event(type, { cancelable: true }), {
           pointerId: 1,
           button: 0,
-          detail: 1,
+          buttons: type === "pointerup" ? 0 : buttons,
+          pointerType: "mouse",
+          detail: 0,
           shiftKey: false,
           altKey: false,
           clientX,
           clientY,
         }),
       ),
+    mouseDown: (detail: number, clientX: number) =>
+      target.dispatchEvent(
+        Object.assign(new Event("mousedown", { cancelable: true }), {
+          button: 0,
+          detail,
+          clientX,
+          clientY: 10,
+        }),
+      ),
+    hasCapture: () => capture !== null,
+    setButtons: (value: number) => {
+      buttons = value;
+    },
   };
 }
 

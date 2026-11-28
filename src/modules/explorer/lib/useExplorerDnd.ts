@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { excludeNestedSources } from "./batchMove";
+import { parentDir } from "./pathParent";
 
 export type ExplorerPathDropTarget = {
   updateTarget: (clientX: number, clientY: number) => boolean;
@@ -25,26 +26,22 @@ type Options = {
 
 const THRESHOLD = 5;
 
-function parentDir(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i > 0 ? path.slice(0, i) : path;
-}
-
 export function resolveExplorerMoveTarget(
   sources: string[],
   rootPath: string,
   hoveredPath: string | null,
   insideExplorer: boolean,
   isDir: (path: string) => boolean | undefined,
+  windowsPaths: boolean,
 ): string | null {
   if (!insideExplorer) return null;
   const target = hoveredPath
     ? isDir(hoveredPath)
       ? hoveredPath
-      : parentDir(hoveredPath)
+      : parentDir(hoveredPath, windowsPaths)
     : rootPath;
   const allAlreadyInTarget = sources.every(
-    (source) => parentDir(source) === target,
+    (source) => parentDir(source, windowsPaths) === target,
   );
   if (allAlreadyInTarget) return null;
   for (const source of sources) {
@@ -74,14 +71,17 @@ export function finishExplorerDrag(
 // native HTML5 DnD which Tauri intercepts when dragDropEnabled is on. The ghost
 // follows the cursor via direct DOM writes, so dragging re-renders only when the
 // drop target changes, not on every move.
-export function useExplorerDnd({
-  rootPath,
-  isDir,
-  onMove,
-  getSelectedPaths,
-  collapseSelectionTo,
-  pathDropTarget,
-}: Options) {
+export function useExplorerDnd(
+  windowsPaths: boolean,
+  {
+    rootPath,
+    isDir,
+    onMove,
+    getSelectedPaths,
+    collapseSelectionTo,
+    pathDropTarget,
+  }: Options,
+) {
   const [dragLabel, setDragLabel] = useState<string | null>(null);
   const [dropTargetDir, setDropTargetDir] = useState<string | null>(null);
 
@@ -91,6 +91,7 @@ export function useExplorerDnd({
   const suppressClickRef = useRef(false);
   const cleanupRef = useRef<(() => void) | null>(null);
   const optsRef = useRef({
+    windowsPaths,
     rootPath,
     isDir,
     onMove,
@@ -103,6 +104,7 @@ export function useExplorerDnd({
   // options from a render React later discards.
   useLayoutEffect(() => {
     optsRef.current = {
+      windowsPaths,
       rootPath,
       isDir,
       onMove,
@@ -111,6 +113,7 @@ export function useExplorerDnd({
       pathDropTarget,
     };
   }, [
+    windowsPaths,
     rootPath,
     isDir,
     onMove,
@@ -146,13 +149,14 @@ export function useExplorerDnd({
     let sources: string[] = [source];
 
     const move = (ev: PointerEvent) => {
+      const { windowsPaths, rootPath, isDir, pathDropTarget } = optsRef.current;
       if (!active) {
         if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < THRESHOLD) return;
         active = true;
         lastPosRef.current = { x: ev.clientX, y: ev.clientY };
         const sel = optsRef.current.getSelectedPaths();
         if (sel.has(source) && sel.size > 1) {
-          sources = excludeNestedSources([...sel]);
+          sources = excludeNestedSources([...sel], windowsPaths);
         } else {
           sources = [source];
           optsRef.current.collapseSelectionTo(source);
@@ -164,7 +168,6 @@ export function useExplorerDnd({
         );
       }
       placeGhost(ev.clientX, ev.clientY);
-      const { rootPath, isDir, pathDropTarget } = optsRef.current;
       const element = document.elementFromPoint(ev.clientX, ev.clientY);
       const terminalTargeted =
         pathDropTarget?.updateTarget(ev.clientX, ev.clientY) ?? false;
@@ -178,6 +181,7 @@ export function useExplorerDnd({
             p ?? null,
             element?.closest("[data-explorer-drop]") != null,
             isDir,
+            windowsPaths,
           );
       if (dropTargetRef.current !== valid) {
         dropTargetRef.current = valid;

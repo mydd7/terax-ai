@@ -16,6 +16,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src",
         true,
         isDir,
+        false,
       ),
     ).toBe("/repo/src");
   });
@@ -28,8 +29,32 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src/index.ts",
         true,
         isDir,
+        false,
       ),
     ).toBe("/repo/src");
+  });
+
+  it("moves beside a file at the drive root using its absolute directory", () => {
+    expect(
+      resolveExplorerMoveTarget(
+        ["C:/folder/move.txt"],
+        "C:/",
+        "C:/target.txt",
+        true,
+        isDir,
+        true,
+      ),
+    ).toBe("C:/");
+    expect(
+      resolveExplorerMoveTarget(
+        ["C:/move.txt"],
+        "C:/",
+        "C:/target.txt",
+        true,
+        isDir,
+        true,
+      ),
+    ).toBeNull();
   });
 
   it("uses the root only over empty explorer space", () => {
@@ -40,6 +65,7 @@ describe("resolveExplorerMoveTarget", () => {
         null,
         true,
         isDir,
+        false,
       ),
     ).toBe("/repo");
   });
@@ -52,6 +78,7 @@ describe("resolveExplorerMoveTarget", () => {
         null,
         false,
         isDir,
+        false,
       ),
     ).toBeNull();
   });
@@ -64,6 +91,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src",
         true,
         isDir,
+        false,
       ),
     ).toBeNull();
     expect(
@@ -73,6 +101,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src/components",
         true,
         isDir,
+        false,
       ),
     ).toBeNull();
   });
@@ -85,6 +114,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src/components",
         true,
         isDir,
+        false,
       ),
     ).toBe("/repo/src/components");
   });
@@ -97,6 +127,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src",
         true,
         isDir,
+        false,
       ),
     ).toBeNull();
   });
@@ -109,6 +140,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src",
         true,
         isDir,
+        false,
       ),
     ).toBe("/repo/src");
   });
@@ -121,6 +153,7 @@ describe("resolveExplorerMoveTarget", () => {
         "/repo/src/components",
         true,
         isDir,
+        false,
       ),
     ).toBeNull();
   });

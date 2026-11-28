@@ -27,7 +27,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { IS_MAC } from "@/lib/platform";
+import { IS_MAC, IS_WINDOWS } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { ExplorerSearch, type ExplorerSearchHandle } from "./ExplorerSearch";
 import {
@@ -124,8 +124,8 @@ const ROW_HEIGHT = 24;
 const PASTE_HINT = IS_MAC ? "⌘V" : "Ctrl+V";
 const OVERSCAN = 8;
 
-function basename(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean);
+function basename(path: string, windowsPaths: boolean): string {
+  const parts = path.split(windowsPaths ? /[\\/]/ : "/").filter(Boolean);
   return parts.length ? parts[parts.length - 1] : path;
 }
 
@@ -245,6 +245,7 @@ export const FileExplorer = memo(
     );
     const [anchorPath, setAnchorPath] = useState<string | null>(null);
     const workspace = useWorkspaceEnvStore((s) => s.env);
+    const windowsPaths = IS_WINDOWS && workspace.kind === "local";
     const pasteBusyRef = useRef(false);
     const pasteScopeRef = useRef({ rootPath, workspace });
     const [pastedSelection, setPastedSelection] = useState<{
@@ -373,7 +374,7 @@ export const FileExplorer = memo(
       },
       [entryIndexByPath, rows],
     );
-    const dnd = useExplorerDnd({
+    const dnd = useExplorerDnd(windowsPaths, {
       rootPath: rootPath ?? "",
       isDir: isDirAt,
       onMove: tree.movePaths,
@@ -551,7 +552,9 @@ export const FileExplorer = memo(
 
       if (isPasteShortcut(e, IS_MAC)) {
         e.preventDefault();
-        void pasteInto(pasteTargetDir(anchorPath, isDirAt, rootPath));
+        void pasteInto(
+          pasteTargetDir(anchorPath, isDirAt, rootPath, windowsPaths),
+        );
         return;
       }
 
@@ -682,12 +685,12 @@ export const FileExplorer = memo(
             title={rootPath}
           >
             <FolderIcon
-              name={basename(rootPath)}
+              name={basename(rootPath, windowsPaths)}
               height={15}
               width={15}
               className="mx-1.5"
             />
-            {basename(rootPath)}
+            {basename(rootPath, windowsPaths)}
           </span>
 
           <Button
@@ -928,7 +931,7 @@ export const FileExplorer = memo(
                       tree.beginCreate(
                         menuTarget.isDir
                           ? menuTarget.path
-                          : parentOf(menuTarget.path, rootPath),
+                          : parentOf(menuTarget.path, windowsPaths, rootPath),
                         "file",
                       )
                     }
@@ -941,7 +944,7 @@ export const FileExplorer = memo(
                       tree.beginCreate(
                         menuTarget.isDir
                           ? menuTarget.path
-                          : parentOf(menuTarget.path, rootPath),
+                          : parentOf(menuTarget.path, windowsPaths, rootPath),
                         "dir",
                       )
                     }
@@ -954,7 +957,7 @@ export const FileExplorer = memo(
                       void pasteInto(
                         menuTarget.isDir
                           ? menuTarget.path
-                          : parentOf(menuTarget.path, rootPath),
+                          : parentOf(menuTarget.path, windowsPaths, rootPath),
                       )
                     }
                   >

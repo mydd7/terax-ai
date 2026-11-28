@@ -24,13 +24,14 @@ function dirAt(
   y: number,
   rootPath: string | null,
   isDir: (p: string) => boolean | undefined,
+  windowsPaths: boolean,
 ): string | null {
   const el = document.elementFromPoint(x, y) as HTMLElement | null;
   if (!el) return null;
   const row = el.closest<HTMLElement>("[data-fs-path]");
   if (row) {
     const p = row.getAttribute("data-fs-path") as string;
-    return isDir(p) ? p : parentDir(p, rootPath ?? p);
+    return isDir(p) ? p : parentDir(p, windowsPaths, rootPath ?? p);
   }
   if (el.closest("[data-explorer-drop]")) return rootPath;
   return null;
@@ -67,7 +68,9 @@ export function useExplorerFileDrop({
           IS_WINDOWS,
           window.devicePixelRatio,
         );
-        const dir = dirAt(x, y, rootPath, isDir);
+        const workspace = currentWorkspaceEnv();
+        const windowsPaths = IS_WINDOWS && workspace.kind === "local";
+        const dir = dirAt(x, y, rootPath, isDir, windowsPaths);
         if (p.type === "enter" || p.type === "over") {
           setTargetDir(dir);
           return;
@@ -75,7 +78,6 @@ export function useExplorerFileDrop({
         if (p.type === "drop") {
           setTargetDir(null);
           if (!rootPath || !dir || p.paths.length === 0) return;
-          const workspace = currentWorkspaceEnv();
           void invoke<CopyResult>("fs_copy", {
             sources: p.paths,
             destDir: dir,
