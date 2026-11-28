@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { LazyTerminalLinksOptions } from "./LazyTerminalLinks";
+import { deferTerminalLinks } from "./terminalLinksLoader";
 import type { ViewportLinkSource } from "./ViewportLinkResolver";
 import { createTerminalLinks } from "./terminalLinksRuntime";
 
@@ -27,7 +28,10 @@ function source(): ViewportLinkSource {
   };
 }
 
-function setup(mouseTracking = false) {
+function setup(
+  mouseTracking = false,
+  createLinks: typeof deferTerminalLinks = createTerminalLinks,
+) {
   const target = Object.assign(new EventTarget(), {
     style: { cursor: "" },
     getBoundingClientRect: () => ({ left: 100, top: 50 }),
@@ -52,7 +56,7 @@ function setup(mouseTracking = false) {
     geometry: () => ({ cellWidth: 8, cellHeight: 16, shiftY: 0, color: "red" }),
     onActivate,
   };
-  const links = createTerminalLinks(options);
+  const links = createLinks(options);
   const fire = (type: string, x: number, y: number, extra = {}) => {
     const { target: eventTarget, ...rest } = extra as { target?: unknown };
     const event = Object.assign(new Event(type, { cancelable: true }), {
@@ -111,6 +115,22 @@ describe("createTerminalLinks", () => {
     const { fire, target, links } = setup();
     fire("pointermove", 8 * 8 + 2, 5, { target: scrollbarNode });
     expect(target.style.cursor).not.toBe("pointer");
+    links.dispose();
+  });
+});
+
+describe("deferTerminalLinks", () => {
+  it("opens the link after a modified click and 70 queued hover moves", async () => {
+    const { fire, links, onActivate } = setup(false, deferTerminalLinks);
+    fire("pointerdown", 66, 5, { pointerId: 1, buttons: 1 });
+    fire("pointerup", 66, 5, { pointerId: 1, buttons: 0 });
+    for (let i = 0; i < 70; i++) {
+      fire("pointermove", 67 + i, 5, { pointerId: 1, buttons: 0 });
+    }
+    await vi.dynamicImportSettled();
+    expect(onActivate).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ kind: "url", uri: "https://example.com/a" }),
+    );
     links.dispose();
   });
 });

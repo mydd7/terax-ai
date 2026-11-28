@@ -1,3 +1,4 @@
+import { selectionChangedByPointer } from "@/modules/terminal/ghostty/selection/TerminalSelectionController";
 import type { LazyTerminalLinksOptions } from "./LazyTerminalLinks";
 
 /** A queued click only belongs to the content and geometry it was made on. */
@@ -36,6 +37,11 @@ export function deferTerminalLinks(
   let disposed = false;
   const events: Event[] = [];
   let clickStamp: string | null = null;
+  let press: {
+    down: PointerEvent;
+    up: PointerEvent | null;
+    evidence: { event: Event; distance: number } | null;
+  } | null = null;
   const types = [
     "pointermove",
     "pointerdown",
@@ -48,20 +54,60 @@ export function deferTerminalLinks(
     "blur",
   ];
   const capture = (event: Event) => {
-    if (event.type === "pointerdown" && clickStamp === null)
-      clickStamp = terminalLinkReplayStamp(options);
-    // A pressed pointer can move away and back before the code loads.
+    const pointer = event as PointerEvent;
     if (
-      clickStamp === null &&
+      event.type === "pointerdown" &&
+      !pointer.button &&
+      pointer.pointerType !== "touch"
+    ) {
+      clickStamp ??= terminalLinkReplayStamp(options);
+      press = { down: pointer, up: null, evidence: null };
+    } else if (
+      event.type === "pointerleave" ||
+      event.type === "pointercancel" ||
+      event.type === "blur"
+    ) {
+      press = null;
+    } else if (press && !press.up && pointer.pointerId === press.down.pointerId) {
+      if (event.type === "pointerup" && !pointer.button) {
+        press.up = pointer;
+      } else if (event.type === "lostpointercapture") {
+        press.evidence = { event, distance: Infinity };
+      } else if (
+        event.type === "pointermove" &&
+        pointer.pointerType !== "touch"
+      ) {
+        // A drag can return to the press point before the code loads.
+        const distance =
+          (pointer.buttons & 1) === 0 || selectionChangedByPointer.has(event)
+            ? Infinity
+            : Math.hypot(
+                pointer.clientX - press.down.clientX,
+                pointer.clientY - press.down.clientY,
+              );
+        if (!press.evidence || distance > press.evidence.distance)
+          press.evidence = { event, distance };
+      }
+    }
+    if (
+      (!press || press.up) &&
       event.type === "pointermove" &&
       events[events.length - 1]?.type === "pointermove"
     )
       events.pop();
     events.push(event);
-    if (events.length > 64) events.shift();
+    if (events.length > 64) {
+      const index = events.findIndex(
+        (queued) =>
+          queued !== press?.down &&
+          queued !== press?.up &&
+          queued !== press?.evidence?.event,
+      );
+      events.splice(index, 1);
+    }
   };
   const captureOutsideRelease = (event: PointerEvent) => {
-    if (clickStamp !== null && !event.composedPath().includes(options.target))
+    if (press && !press.up && !event.composedPath().includes(options.target))
       capture(event);
   };
   const listen = (add: boolean) => {
@@ -81,6 +127,7 @@ export function deferTerminalLinks(
       options.keyTarget.removeEventListener("pointerup", captureOutsideRelease, {
         capture: true,
       });
+      press = null;
     }
   };
   listen(true);
