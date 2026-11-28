@@ -293,7 +293,7 @@ export class GhosttyInputController {
     if (data) this.pasteKeys.set(code, waiting);
     void readTerminalClipboard().then((text) => {
       if (this.pasteKeys.get(code) === waiting) this.pasteKeys.delete(code);
-      if (this.disposed) return;
+      if (this.disposed || text === null) return;
       if (text) {
         this.paste(text);
         return;

@@ -990,7 +990,7 @@ async function inputScenario(run: ScenarioRun): Promise<void> {
     await key({ chars: "a", code: 0, flags: CMD });
     await key({ chars: "x", code: 7 });
   });
-  await writeTerminalClipboard(saved);
+  if (saved !== null) await writeTerminalClipboard(saved);
   const first = run.app().activeId;
   await check("tab switch away and back, then a", "61", async () => {
     const second = await run.newShellTab();

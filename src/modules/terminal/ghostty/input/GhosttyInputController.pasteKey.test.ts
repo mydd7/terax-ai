@@ -5,12 +5,12 @@ import { FakeElement, FakeTextArea } from "./fakeTextArea";
 import { GhosttyInputController } from "./GhosttyInputController";
 
 const clipboard = vi.hoisted(() => ({
-  resolve: (_text: string) => {},
+  resolve: (_text: string | null) => {},
 }));
 
 vi.mock("@/modules/terminal/lib/terminalClipboard", () => ({
   readTerminalClipboard: () =>
-    new Promise<string>((resolve) => {
+    new Promise<string | null>((resolve) => {
       clipboard.resolve = resolve;
     }),
 }));
@@ -88,6 +88,19 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("Ctrl+V forwarded as a key when the clipboard has no text", () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it("suppresses Windows Ctrl+V when the preceding copy fails", async () => {
+    const { controller, key, sent } = harness(3);
+    try {
+      key("keydown");
+      key("keyup");
+      clipboard.resolve(null);
+      await settle();
+      expect(sent()).toEqual([]);
+    } finally {
+      controller.dispose();
+    }
+  });
 
   it.each([false, true])(
     "uses V's release modifiers even when the clipboard resolves late (%s)",
